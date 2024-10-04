@@ -1,6 +1,7 @@
 import os
 import time
 
+from tqdm import tqdm
 import cv2
 import numpy as np
 import pandas as pd
@@ -85,8 +86,7 @@ def main(path, output_folder):
 
     print("Video path is : {}, FPS: {}".format(path, fps))
 
-    frame_id = 0
-
+    print("Loading model...")
     kpts_model = Unet(out_ch=num_keypoints + 1)
     model_dict = torch.load(kpts_checkpoint_path)
     kpts_model.load_state_dict(model_dict, strict=True)
@@ -94,24 +94,25 @@ def main(path, output_folder):
     kpts_model.eval()
 
     segment_dict = {}
-    frames, nums = [], []
+    frame_ids, frames, nums = [], [], []
 
-    while True:
+    print("Loading frames...")
+    ret_val = True
+    while ret_val:
         ret_val, frame = cap.read()
         if ret_val:
-            num_kpts = calculate_homography(kpts_model, frame, device, distance_threshold, num_keypoints, threshold)
-            # print("Frame ID : {}, Num of KPTS: {}".format(frame_id, num_kpts))
+            frames.append(frame)
 
-            frames.append(frame_id)
-            nums.append(num_kpts)
-
-        else:
-            break
-        frame_id += 1
+    print("Detecting keypoints...")
+    for frame_id, frame in enumerate(tqdm(frames)):
+        num_kpts = calculate_homography(kpts_model, frame, device, distance_threshold, num_keypoints, threshold)
+        frame_ids.append(frame_id)
+        nums.append(num_kpts)
 
     end_time = time.time()
+    print("Saving results...")
 
-    segment_dict['frame'] = frames
+    segment_dict['frame'] = frame_ids
     segment_dict['num_kpts'] = nums
 
     df = pd.DataFrame.from_dict(segment_dict, orient='index').transpose()
@@ -125,7 +126,7 @@ def main(path, output_folder):
 if __name__ == "__main__":
     dataset_dir = "./"
     videos_dir = os.path.join(dataset_dir, 'videos')
-    output_dir = os.path.join(dataset_dir, 'SFR_original_code', 'segmentations')
+    output_dir = os.path.join(dataset_dir, 'SFR_tidy', 'segmentations')
 
     # season_id = ['2324']
     # game_id = ['246', '247', '248', '249', '250']
