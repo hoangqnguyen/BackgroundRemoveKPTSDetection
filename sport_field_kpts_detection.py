@@ -8,7 +8,7 @@ import pandas as pd
 
 from tqdm import tqdm
 from model.attention_effv2sunet import Unet
-from utils.inference import get_final_preds
+from utils.inference import get_final_preds, get_final_preds_torch
 from utils.utils import to_torch, normalize
 from video_dataset import get_dataloader
 
@@ -43,8 +43,8 @@ def calculate_homography(
             org_sizes.extend(org_size_batch.to(int).tolist())
 
             # Prediction
-            predictions_batch = kpts_model(frames).detach().cpu().numpy()
-            preds_batch, maxvals_batch = get_final_preds(predictions_batch)
+            predictions_batch = kpts_model(frames)
+            preds_batch, maxvals_batch = get_final_preds_torch(predictions_batch)
 
             preds.extend(np.split(preds_batch, preds_batch.shape[0], axis=0))
             maxvals.extend(np.split(maxvals_batch, maxvals_batch.shape[0], axis=0))

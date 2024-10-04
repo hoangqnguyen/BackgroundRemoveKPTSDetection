@@ -34,6 +34,43 @@ def get_max_preds(batch_heatmaps):
     preds *= pred_mask
     return preds, maxvals
 
+def get_max_preds_torch(batch_heatmaps):
+    '''
+    Get predictions from score maps.
+    batch_heatmaps: torch.Tensor([batch_size, num_joints, height, width])
+    '''
+    assert isinstance(batch_heatmaps, torch.Tensor), \
+        'batch_heatmaps should be a torch.Tensor'
+    assert batch_heatmaps.dim() == 4, \
+        f'batch_heatmaps should be 4-dimensional, found {batch_heatmaps.dim()} dimensions'
+
+    batch_size = batch_heatmaps.size(0)
+    num_joints = batch_heatmaps.size(1)
+    width = batch_heatmaps.size(3)
+
+    # Reshape heatmaps to (batch_size, num_joints, height * width)
+    heatmaps_reshaped = batch_heatmaps.view(batch_size, num_joints, -1)
+
+    # Find the indices and values of the max elements
+    maxvals, idx = torch.max(heatmaps_reshaped, dim=2)
+
+    maxvals = maxvals.view(batch_size, num_joints, 1)
+    idx = idx.view(batch_size, num_joints, 1)
+
+    # Repeat idx to have two elements (for x and y coordinates)
+    preds = idx.repeat(1, 1, 2)
+
+    # Convert indices to x and y coordinates
+    preds[:, :, 0] = preds[:, :, 0] % width  # x coordinate
+    preds[:, :, 1] = preds[:, :, 1] // width  # y coordinate
+
+    preds = preds.float()
+
+    # Create a mask to filter out predictions with max value <= 0
+    pred_mask = (maxvals > 0).float().repeat(1, 1, 2)
+    preds *= pred_mask
+
+    return preds, maxvals
 
 def taylor(hm, coord):
     heatmap_height = hm.shape[0]
@@ -160,6 +197,35 @@ def get_final_preds(hm):
 
     return preds, maxvals
 
+
+def get_final_preds_torch(hm):
+    coords, maxvals = get_max_preds_torch(hm)
+    coords = coords.cpu().numpy()
+    maxvals = maxvals.cpu().numpy()
+
+    heatmap_height = hm.shape[2]
+    heatmap_width = hm.shape[3]
+    BLUR_KERNEL = 11
+
+    # post-processing
+    # hm = gaussian_blur(hm, BLUR_KERNEL)
+    hm = gaussian_blur_torch(hm, BLUR_KERNEL)
+    hm = np.maximum(hm, 1e-10)
+    hm = np.log(hm)
+    for n in range(coords.shape[0]):
+        for p in range(coords.shape[1]):
+            coords[n, p] = taylor(hm[n][p], coords[n][p])
+
+    preds = coords.copy()
+    # print("Preds : ", preds)
+
+    # # Transform back
+    # for i in range(coords.shape[0]):
+    #     preds[i] = transform_preds(
+    #         coords[i], center[i], scale[i], [heatmap_width, heatmap_height]
+    #     )
+
+    return preds, maxvals
 
 def gaussian_blur_torch(hm, kernel_size):
     # Check if CUDA is available
