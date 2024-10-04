@@ -1,90 +1,115 @@
 import os
 import time
 
-from tqdm import tqdm
 import cv2
+import torch
 import numpy as np
 import pandas as pd
-import torch
 
+from tqdm import tqdm
 from model.attention_effv2sunet import Unet
 from utils.inference import get_final_preds
 from utils.utils import to_torch, normalize
+from video_dataset import get_dataloader
 
+def calculate_homography(
+    kpts_model,
+    dataloader,
+    device,
+    distance_threshold,
+    num_keypoints,
+    threshold,
+    input_size,
+    hm_size=(384, 384),
+):
+    frame_ids = []
+    org_sizes = []
+    num_kpts_all = []
+    predictions = []
 
-def calculate_homography(kpts_model, frame, device, distance_threshold, num_keypoints, threshold):
-    input_size = (384, 384)
-    hm_size = (384, 384)
-    org_size = (frame.shape[1], frame.shape[0])
-    input_image = cv2.resize(frame, (input_size[0], input_size[1]))
-    input_image = cv2.cvtColor(input_image, cv2.COLOR_BGR2RGB)
-    input_image = to_torch(input_image).permute(2, 0, 1)
-    input_image = normalize(input_image)
-    input_image = input_image.expand(1, -1, -1, -1)
+    print("Predicting keypoints from frames ...")
 
-    input_image = input_image.to(device, non_blocking=True).float()
+    kpts_model.eval()
+    with torch.no_grad():
+        for batch in tqdm(dataloader):
+            frame_id_batch = batch["frame_id"]
+            frames = batch["frame"].to(device)
+            org_size_batch = batch["org_size"]
 
-    # Prediction
-    prediction = kpts_model(input_image)
-    prediction = prediction.to(device).float()
+            frame_ids.extend(frame_id_batch.to(int).tolist())
+            org_sizes.extend(org_size_batch.to(int).tolist())
 
-    # inference file
-    preds, maxvals = get_final_preds(prediction.clone().cpu().detach().numpy())
+            # Prediction
+            predictions_batch = kpts_model(frames).detach().cpu()
+            predictions.extend(predictions_batch.split(1, dim=0))
 
-    filtered_keypoints = []
-    for i in range(num_keypoints):
-        if maxvals[0, i, :] >= threshold:
-            pred_kpts = preds[0, i, :]
-            x = np.rint(pred_kpts[0] * org_size[0] / hm_size[0]).astype(
-                np.int32)
-            y = np.rint(pred_kpts[1] * org_size[1] / hm_size[1]).astype(
-                np.int32)
+    print("Post-processing model outputs..")
+    # breakpoint()
+    for prediction, org_size in tqdm(
+        zip(predictions, org_sizes), total=len(predictions)
+    ):
+        # inference file
+        preds, maxvals = get_final_preds(prediction.numpy())
 
-            keypoint = (x, y)
-            # Compare the distance between the current keypoint and all other keypoints
-            distances = [np.linalg.norm(np.array(keypoint) - np.array(kp)) for kp in filtered_keypoints]
-            if len(filtered_keypoints) == 0 or min(distances) > distance_threshold:
-                filtered_keypoints.append(keypoint)
+        filtered_keypoints = []
+        for i in range(num_keypoints):
+            if maxvals[0, i, :] >= threshold:
+                pred_kpts = preds[0, i, :]
+                x = np.rint(pred_kpts[0] * org_size[0] / hm_size[0]).astype(np.int32)
+                y = np.rint(pred_kpts[1] * org_size[1] / hm_size[1]).astype(np.int32)
+
+                keypoint = (x, y)
+                # Compare the distance between the current keypoint and all other keypoints
+                distances = [
+                    np.linalg.norm(np.array(keypoint) - np.array(kp))
+                    for kp in filtered_keypoints
+                ]
+                if len(filtered_keypoints) == 0 or min(distances) > distance_threshold:
+                    filtered_keypoints.append(keypoint)
+                else:
+                    filtered_keypoints.append((0.0, 0.0))
             else:
-                filtered_keypoints.append((0., 0.))
-        else:
-            # pts.append((0, 0))
-            filtered_keypoints.append((0., 0.))
+                # pts.append((0, 0))
+                filtered_keypoints.append((0.0, 0.0))
 
-    pts = np.array(filtered_keypoints).reshape(-1, 2)
+        pts = np.array(filtered_keypoints).reshape(-1, 2)
 
-    pts_sel, template_sel = [], []
-    for kp_idx, kp in enumerate(pts):
-        if int(kp[0]) != 0 and int(kp[1]) != 0 and (0 <= int(kp[0]) < org_size[0]) and (
-                0 <= int(kp[1]) < org_size[1]):
-            x = int(kp[0])
-            y = int(kp[1])
-            pts_sel.append((x, y))
+        pts_sel, template_sel = [], []
+        for kp_idx, kp in enumerate(pts):
+            if (
+                int(kp[0]) != 0
+                and int(kp[1]) != 0
+                and (0 <= int(kp[0]) < org_size[0])
+                and (0 <= int(kp[1]) < org_size[1])
+            ):
+                x = int(kp[0])
+                y = int(kp[1])
+                pts_sel.append((x, y))
 
-    pts_sel = np.array(pts_sel)
-    num_kpts = len(pts_sel)
+        pts_sel = np.array(pts_sel)
+        num_kpts = len(pts_sel)
+        num_kpts_all.append(num_kpts)
 
-    return num_kpts
+    return num_kpts_all, frame_ids
 
 
-def main(path, output_folder):
+def main(
+    video_path,
+    output_dir,
+    kpts_checkpoint_path="./checkpoints/volleyball_best_latest.pth",
+    threshold=0.8,
+    distance_threshold=30,
+    num_keypoints=24,
+    input_size=(384, 384),
+    batch_size=32,
+    num_workers=8,
+    device="cuda",
+):
     start_time = time.time()
-    checkpoints_dir = './checkpoints/'
 
-    video_fn = os.path.basename(path)[:-4]
-    os.makedirs(output_folder, exist_ok=True)
-    out_path = os.path.join(output_folder, '{}.csv'.format(video_fn))
-
-    kpts_checkpoint_path = os.path.join(checkpoints_dir, 'volleyball_best_latest.pth')
-    threshold = 0.8
-    distance_threshold = 30
-    num_keypoints = 24
-    device = torch.device("cuda")
-
-    cap = cv2.VideoCapture(path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-
-    print("Video path is : {}, FPS: {}".format(path, fps))
+    video_fn = os.path.basename(video_path)[:-4]
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, "{}.csv".format(video_fn))
 
     print("Loading model...")
     kpts_model = Unet(out_ch=num_keypoints + 1)
@@ -96,37 +121,53 @@ def main(path, output_folder):
     segment_dict = {}
     frame_ids, frames, nums = [], [], []
 
-    print("Loading frames...")
-    ret_val = True
-    while ret_val:
-        ret_val, frame = cap.read()
-        if ret_val:
-            frames.append(frame)
-
+    # print("Loading frames...")
     print("Detecting keypoints...")
-    for frame_id, frame in enumerate(tqdm(frames)):
-        num_kpts = calculate_homography(kpts_model, frame, device, distance_threshold, num_keypoints, threshold)
-        frame_ids.append(frame_id)
-        nums.append(num_kpts)
+    dataloader = get_dataloader(
+        video_path, batch_size=batch_size, resize=input_size, num_workers=num_workers
+    )
+    nums, frame_ids = calculate_homography(
+        kpts_model,
+        dataloader,
+        device,
+        distance_threshold,
+        num_keypoints,
+        threshold,
+        input_size=input_size,
+    )
 
     end_time = time.time()
     print("Saving results...")
 
-    segment_dict['frame'] = frame_ids
-    segment_dict['num_kpts'] = nums
+    segment_dict["frame"] = frame_ids
+    segment_dict["num_kpts"] = nums
 
-    df = pd.DataFrame.from_dict(segment_dict, orient='index').transpose()
+    df = pd.DataFrame.from_dict(segment_dict, orient="index").transpose()
     df.to_csv(out_path, header=True, index=False)
 
     duration = end_time - start_time
-    print('Duration: {}'.format(duration))
-    print('==*==*' * 15)
+    print("Duration: {}".format(duration))
+    print("==*==*" * 15)
 
 
 if __name__ == "__main__":
     dataset_dir = "./"
-    videos_dir = os.path.join(dataset_dir, 'videos')
-    output_dir = os.path.join(dataset_dir, 'SFR_tidy', 'segmentations')
+    videos_dir = os.path.join(dataset_dir, "videos")
+    output_dir = os.path.join(dataset_dir, "SFR_batch", "segmentations")
+    vdo_path = os.path.join(videos_dir, "v_2324_223_s2_short.mp4")
+
+    configs = {
+        "video_path": vdo_path,
+        "output_dir": output_dir,
+        "kpts_checkpoint_path": "./checkpoints/volleyball_best_latest.pth",
+        "threshold": 0.8,
+        "distance_threshold": 30,
+        "num_keypoints": 24,
+        "input_size": (384, 384),
+        "batch_size": 32,
+        "num_workers": 8,
+        "device": "cuda",
+    }
 
     # season_id = ['2324']
     # game_id = ['246', '247', '248', '249', '250']
@@ -137,5 +178,4 @@ if __name__ == "__main__":
     #         for sid in set_id:
     #             vdo_path = os.path.join(videos_dir, 'v_{}_{}_{}.mp4'.format(ssid, gid, sid))
 
-    vdo_path = os.path.join(videos_dir, 'v_2324_223_s2_short.mp4')
-    main(vdo_path, output_dir)
+    main(**configs)
