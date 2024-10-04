@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 
 def get_max_preds(batch_heatmaps):
@@ -139,7 +141,8 @@ def get_final_preds(hm):
     BLUR_KERNEL = 11
 
     # post-processing
-    hm = gaussian_blur(hm, BLUR_KERNEL)
+    # hm = gaussian_blur(hm, BLUR_KERNEL)
+    hm = gaussian_blur_torch(hm, BLUR_KERNEL)
     hm = np.maximum(hm, 1e-10)
     hm = np.log(hm)
     for n in range(coords.shape[0]):
@@ -157,6 +160,45 @@ def get_final_preds(hm):
 
     return preds, maxvals
 
+
+def gaussian_blur_torch(hm, kernel_size):
+    # Check if CUDA is available
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Convert hm to a PyTorch tensor if it's a NumPy array
+    if isinstance(hm, np.ndarray):
+        hm = torch.from_numpy(hm).float()
+    hm = hm.to(device)
+    
+    batch_size, num_joints, height, width = hm.shape
+    padding = (kernel_size - 1) // 2
+    
+    # Create Gaussian kernel
+    sigma = kernel_size / 6.0
+    x = torch.arange(-padding, padding + 1, device=device).float()
+    y = x.view(-1, 1)
+    x_grid, y_grid = x.repeat(kernel_size, 1), y.repeat(1, kernel_size)
+    kernel = torch.exp(-(x_grid ** 2 + y_grid ** 2) / (2 * sigma ** 2))
+    kernel = kernel / kernel.sum()
+    
+    # Reshape kernel to [out_channels, in_channels/groups, kH, kW]
+    kernel = kernel.view(1, 1, kernel_size, kernel_size)
+    kernel = kernel.repeat(num_joints, 1, 1, 1)
+    
+    # Apply padding
+    hm_padded = F.pad(hm, (padding, padding, padding, padding), mode='constant', value=0)
+    
+    # Store original maximum values
+    origin_max = hm.amax(dim=(2, 3), keepdim=True)
+    
+    # Apply Gaussian filter using group convolution
+    hm_blurred = F.conv2d(hm_padded, kernel, groups=num_joints)
+    
+    # Normalize to maintain the original maximum value
+    max_blurred = hm_blurred.amax(dim=(2, 3), keepdim=True) + 1e-6  # Avoid division by zero
+    hm_blurred = hm_blurred * (origin_max / max_blurred)
+    
+    return hm_blurred.cpu().numpy()
 
 def get_final_preds_dark_udp(hm):
     coords, maxvals = get_max_preds(hm)

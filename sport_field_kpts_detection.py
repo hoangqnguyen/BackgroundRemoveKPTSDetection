@@ -25,7 +25,10 @@ def calculate_homography(
     frame_ids = []
     org_sizes = []
     num_kpts_all = []
-    predictions = []
+    # predictions = []
+    time_hm = []
+    time_filter = []
+    preds, maxvals = [], []
 
     print("Predicting keypoints from frames ...")
 
@@ -40,23 +43,31 @@ def calculate_homography(
             org_sizes.extend(org_size_batch.to(int).tolist())
 
             # Prediction
-            predictions_batch = kpts_model(frames).detach().cpu()
-            predictions.extend(predictions_batch.split(1, dim=0))
+            predictions_batch = kpts_model(frames).detach().cpu().numpy()
+            preds_batch, maxvals_batch = get_final_preds(predictions_batch)
+
+            preds.extend(np.split(preds_batch, preds_batch.shape[0], axis=0))
+            maxvals.extend(np.split(maxvals_batch, maxvals_batch.shape[0], axis=0))
+            # predictions.extend(predictions_batch.split(1, dim=0))
 
     print("Post-processing model outputs..")
-    # breakpoint()
-    for prediction, org_size in tqdm(
-        zip(predictions, org_sizes), total=len(predictions)
-    ):
+    
+    # for pre, org_size in tqdm(
+    #     zip(predictions, org_sizes), total=len(predictions)
+    # ):
+    for idx in tqdm(range(len(preds))):
+        # t_hm = time.time()
         # inference file
-        preds, maxvals = get_final_preds(prediction.numpy())
+        # preds, maxvals = get_final_preds(prediction.numpy())
+        # time_hm.append(time.time() - t_hm)
 
+        # t_filter = time.time()
         filtered_keypoints = []
         for i in range(num_keypoints):
-            if maxvals[0, i, :] >= threshold:
-                pred_kpts = preds[0, i, :]
-                x = np.rint(pred_kpts[0] * org_size[0] / hm_size[0]).astype(np.int32)
-                y = np.rint(pred_kpts[1] * org_size[1] / hm_size[1]).astype(np.int32)
+            if maxvals[idx][0, i, :] >= threshold:
+                pred_kpts = preds[idx][0, i, :]
+                x = np.rint(pred_kpts[0] * org_sizes[idx][0] / hm_size[0]).astype(np.int32)
+                y = np.rint(pred_kpts[1] * org_sizes[idx][1] / hm_size[1]).astype(np.int32)
 
                 keypoint = (x, y)
                 # Compare the distance between the current keypoint and all other keypoints
@@ -72,6 +83,7 @@ def calculate_homography(
                 # pts.append((0, 0))
                 filtered_keypoints.append((0.0, 0.0))
 
+
         pts = np.array(filtered_keypoints).reshape(-1, 2)
 
         pts_sel, template_sel = [], []
@@ -79,17 +91,20 @@ def calculate_homography(
             if (
                 int(kp[0]) != 0
                 and int(kp[1]) != 0
-                and (0 <= int(kp[0]) < org_size[0])
-                and (0 <= int(kp[1]) < org_size[1])
+                and (0 <= int(kp[0]) < org_sizes[idx][0])
+                and (0 <= int(kp[1]) < org_sizes[idx][1])
             ):
                 x = int(kp[0])
                 y = int(kp[1])
                 pts_sel.append((x, y))
+        # time_filter.append(time.time() - t_filter)
 
         pts_sel = np.array(pts_sel)
         num_kpts = len(pts_sel)
         num_kpts_all.append(num_kpts)
 
+    # print("Average time for heatmap: ", np.mean(time_hm))
+    # print("Average time for filtering: ", np.mean(time_filter))
     return num_kpts_all, frame_ids
 
 
