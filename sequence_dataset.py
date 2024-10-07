@@ -110,7 +110,8 @@ class VideoFrameSlidingDataset(torch.utils.data.Dataset):
         frames = torch.stack(frames, dim=0)
 
         # Apply transform to each frame independently
-        frames = torch.stack([self.transform(frame) for frame in frames], dim=0)
+        # frames = torch.stack([self.transform(frame) for frame in frames], dim=0)
+        frames = self.transform(frames)
 
         # Convert to (C, T, H, W) if channel_first is True
         if self.channel_first:
