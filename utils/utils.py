@@ -4,6 +4,7 @@ import os
 import cv2
 import torch
 from torchvision import transforms
+import time
 
 
 def to_torch(np_array):
@@ -67,6 +68,15 @@ def img_to_video(images, video_name, fps):
     out.release()
 
 
-# img_path = os.path.join("/home/ymo/volleyball_4", "*.jpg")
-# print(img_path)
-# img_to_video(img_path, "/home/ymo/Projects/SFRegistration/video/volleyball_4.mp4", 25)
+
+class Timer:
+    def __init__(self, message="Elapsed time"):
+        self.message = message
+
+    def __enter__(self):
+        self.start_time = time.time()
+        return self  # If you need to return any object, it would be here
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        elapsed_time = time.time() - self.start_time
+        print(f"{self.message}: {elapsed_time:.4f} seconds")
