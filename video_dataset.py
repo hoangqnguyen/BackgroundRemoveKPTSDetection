@@ -105,7 +105,7 @@ def get_dataloader(
 
 if __name__ == "__main__":
     video_path = "videos/v_2324_223_s2_short.mp4"
-    dataloader = get_dataloader(video_path, batch_size=16, buffer_size=400, num_workers=8)
+    dataloader = get_dataloader(video_path, batch_size=16, buffer_size=200, num_workers=8)
 
     for frames in tqdm(dataloader):
         pass

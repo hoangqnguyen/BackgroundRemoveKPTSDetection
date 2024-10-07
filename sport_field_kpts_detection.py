@@ -119,6 +119,7 @@ def main(
     batch_size=32,
     num_workers=8,
     device="cuda",
+    buffer_size=200,
 ):
     start_time = time.time()
 
@@ -139,7 +140,7 @@ def main(
     # print("Loading frames...")
     print("Detecting keypoints...")
     dataloader = get_dataloader(
-        video_path, batch_size=batch_size, resize=input_size, num_workers=num_workers
+        video_path, batch_size=batch_size, resize=input_size, num_workers=num_workers, buffer_size=buffer_size
     )
     nums, frame_ids = calculate_homography(
         kpts_model,
@@ -182,6 +183,7 @@ if __name__ == "__main__":
         "batch_size": 32,
         "num_workers": 8,
         "device": "cuda",
+        "buffer_size": 200,
     }
 
     # season_id = ['2324']
