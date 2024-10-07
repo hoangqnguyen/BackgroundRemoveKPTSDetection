@@ -25,9 +25,6 @@ def calculate_homography(
     frame_ids = []
     org_sizes = []
     num_kpts_all = []
-    # predictions = []
-    time_hm = []
-    time_filter = []
     preds, maxvals = [], []
 
     print("Predicting keypoints from frames ...")
@@ -48,20 +45,10 @@ def calculate_homography(
 
             preds.extend(np.split(preds_batch, preds_batch.shape[0], axis=0))
             maxvals.extend(np.split(maxvals_batch, maxvals_batch.shape[0], axis=0))
-            # predictions.extend(predictions_batch.split(1, dim=0))
 
     print("Post-processing model outputs..")
     
-    # for pre, org_size in tqdm(
-    #     zip(predictions, org_sizes), total=len(predictions)
-    # ):
     for idx in tqdm(range(len(preds))):
-        # t_hm = time.time()
-        # inference file
-        # preds, maxvals = get_final_preds(prediction.numpy())
-        # time_hm.append(time.time() - t_hm)
-
-        # t_filter = time.time()
         filtered_keypoints = []
         for i in range(num_keypoints):
             if maxvals[idx][0, i, :] >= threshold:
@@ -80,7 +67,6 @@ def calculate_homography(
                 else:
                     filtered_keypoints.append((0.0, 0.0))
             else:
-                # pts.append((0, 0))
                 filtered_keypoints.append((0.0, 0.0))
 
 
@@ -103,8 +89,6 @@ def calculate_homography(
         num_kpts = len(pts_sel)
         num_kpts_all.append(num_kpts)
 
-    # print("Average time for heatmap: ", np.mean(time_hm))
-    # print("Average time for filtering: ", np.mean(time_filter))
     return num_kpts_all, frame_ids
 
 
@@ -170,6 +154,7 @@ if __name__ == "__main__":
     dataset_dir = "./"
     videos_dir = os.path.join(dataset_dir, "videos")
     output_dir = os.path.join(dataset_dir, "SFR_batch", "segmentations")
+    # vdo_path = os.path.join(videos_dir, "v_2324_223_s2.mp4")
     vdo_path = os.path.join(videos_dir, "v_2324_223_s2_short.mp4")
 
     configs = {
