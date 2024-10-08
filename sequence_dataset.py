@@ -17,13 +17,11 @@ class VideoFrameSlidingDataset(torch.utils.data.Dataset):
         window_size=16,
         stride=1,
         channel_first=False,  # (C, T, H, W) if True, (T, C, H, W) if False
-        buffer_size=100,  # Only used in "mp4" mode
     ):
         self.mode = mode
         self.window_size = window_size
         self.stride = stride
         self.channel_first = channel_first
-        self.buffer_size = buffer_size
         self.transform = transform
 
         if self.mode == "list":
@@ -121,8 +119,7 @@ def get_dataloader_sliding(
     num_workers=2,
     window_size=16,
     stride=1,
-    channel_first=True,
-    buffer_size=100,  # Only used in "mp4" mode
+    channel_first=False,
 ):
     # Build the transform pipeline
     transform_list = []
@@ -145,7 +142,6 @@ def get_dataloader_sliding(
         window_size=window_size,
         stride=stride,
         channel_first=channel_first,
-        buffer_size=buffer_size,
     )
     dataloader = DataLoader(
         dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers
@@ -165,7 +161,6 @@ if __name__ == "__main__":
         stride=4,
         channel_first=False,
         resize=(384, 384),
-        buffer_size=200,
         num_workers=4,
     )
 
@@ -182,7 +177,6 @@ if __name__ == "__main__":
     # Example: Using those frames in "list" mode
     all_frames = dataloader_mp4.dataset.frames.cpu().numpy()
 
-    print(f"Frames shape: {all_frames.shape}")
     with Timer("Total time (list mode)"):
         dataloader_list = get_dataloader_sliding(
             all_frames,
